@@ -1,0 +1,58 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(uuid())
+  name      String
+  email     String   @unique
+  password  String
+  role      String   @default("user") // user ou admin
+  createdAt DateTime @default(now())
+
+  patients     Patient[]
+  appointments Appointment[]
+}
+
+model Patient {
+  id             String    @id @default(uuid())
+  name           String
+  phone          String
+  address        String
+  birthdate      DateTime?
+  age            Int?
+  contact        String?
+  psychologistId String?
+
+  psychologist User?         @relation(fields: [psychologistId], references: [id])
+  appointments Appointment[]
+  payments     Payment[]
+}
+
+model Appointment {
+  id             String   @id @default(uuid())
+  patientId      String
+  psychologistId String
+  date           DateTime
+  status         String   @default("scheduled")
+  createdAt      DateTime @default(now())
+
+  patient      Patient @relation(fields: [patientId], references: [id])
+  psychologist User    @relation(fields: [psychologistId], references: [id])
+}
+
+model Payment {
+  id        String   @id @default(uuid())
+  patientId String
+  amount    Float
+  status    String   @default("pending") // pending, paid, overdue
+  dueDate   DateTime
+  createdAt DateTime @default(now())
+
+  patient Patient @relation(fields: [patientId], references: [id])
+}
