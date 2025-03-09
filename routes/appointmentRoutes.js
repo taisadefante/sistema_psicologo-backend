@@ -1,63 +1,103 @@
 const express = require("express");
-const prisma = require("../prismaClient");
 const router = express.Router();
+const { PrismaClient } = require("@prisma/client");
 
-// Criar um novo agendamento de consulta
-router.post("/", async (req, res) => {
-  try {
-    const { patientId, date, status } = req.body;
+const prisma = new PrismaClient();
 
-    // Verifica se os campos obrigatórios foram fornecidos
-    if (!patientId || !date) {
-      return res
-        .status(400)
-        .json({ error: "Os campos patientId e date são obrigatórios." });
-    }
+const PSYCHOLOGIST_EMAIL = "psicologo@email.com"; // 🔹 Email fixo para verificar
 
-    // Verifica se o paciente existe
-    const patientExists = await prisma.patient.findUnique({
-      where: { id: patientId },
-    });
+// ✅ Função para obter ou criar o psicólogo fixo
+async function getOrCreatePsychologist() {
+  let psychologist = await prisma.user.findUnique({
+    where: { email: PSYCHOLOGIST_EMAIL },
+  });
 
-    if (!patientExists) {
-      return res.status(404).json({ error: "Paciente não encontrado." });
-    }
-
-    // Converte a data para o formato correto
-    const formattedDate = new Date(date);
-    if (isNaN(formattedDate.getTime())) {
-      return res.status(400).json({ error: "Formato de data inválido." });
-    }
-
-    // Criar a consulta
-    const appointment = await prisma.appointment.create({
+  if (!psychologist) {
+    psychologist = await prisma.user.create({
       data: {
-        patientId,
-        date: formattedDate,
-        status: status || "scheduled",
+        name: "Psicólogo Padrão",
+        email: PSYCHOLOGIST_EMAIL,
+        password: "senha123", // 🔹 Defina uma senha segura
+        role: "admin",
+      },
+    });
+  }
+
+  return psychologist;
+}
+
+// ✅ Buscar todos os agendamentos
+router.get("/", async (req, res) => {
+  try {
+    console.log("🔍 Buscando agendamentos...");
+    const psychologist = await getOrCreatePsychologist();
+
+    const appointments = await prisma.appointment.findMany({
+      where: { psychologistId: psychologist.id }, // 🔹 Agora usa o ID correto
+      include: {
+        patient: true,
+        payments: true,
       },
     });
 
-    res
-      .status(201)
-      .json({ message: "Consulta agendada com sucesso", appointment });
+    res.json(appointments);
   } catch (error) {
-    console.error("Erro ao agendar consulta:", error);
-    res.status(500).json({ error: "Erro interno ao agendar consulta." });
+    console.error("❌ Erro ao buscar agendamentos:", error.message);
+    res
+      .status(500)
+      .json({ error: "Erro ao buscar agendamentos", details: error.message });
   }
 });
 
-// Obter todas as consultas
-router.get("/", async (req, res) => {
+// ✅ Criar um agendamento com pagamento
+router.post("/", async (req, res) => {
   try {
-    const appointments = await prisma.appointment.findMany({
-      include: { patient: true },
-      orderBy: { date: "asc" },
+    const { patientId, date, amount } = req.body;
+
+    if (!patientId || !date || !amount) {
+      return res
+        .status(400)
+        .json({ error: "Todos os campos são obrigatórios!" });
+    }
+
+    // ✅ Verificar se o paciente existe
+    const patientExists = await prisma.patient.findUnique({
+      where: { id: patientId },
     });
-    res.json(appointments);
+    if (!patientExists) {
+      return res.status(404).json({ error: "Paciente não encontrado!" });
+    }
+
+    // ✅ Obter ou criar o psicólogo fixo
+    const psychologist = await getOrCreatePsychologist();
+
+    // ✅ Criar a consulta
+    const appointment = await prisma.appointment.create({
+      data: {
+        patientId,
+        psychologistId: psychologist.id, // 🔹 Usa o ID correto do psicólogo
+        date: new Date(date),
+        status: "scheduled",
+      },
+    });
+
+    // ✅ Criar o pagamento associado
+    await prisma.payment.create({
+      data: {
+        amount: parseFloat(amount),
+        status: "A Pagar",
+        dueDate: new Date(date),
+        patientId: patientId,
+        appointmentId: appointment.id,
+      },
+    });
+
+    res.status(201).json(appointment);
   } catch (error) {
-    console.error("Erro ao buscar consultas:", error);
-    res.status(500).json({ error: "Erro ao buscar consultas." });
+    console.error("❌ Erro ao agendar consulta:", error.message);
+    res
+      .status(500)
+      .json({ error: "Erro interno no servidor.", details: error.message });
   }
 });
 
