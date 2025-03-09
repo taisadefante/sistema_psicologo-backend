@@ -21,7 +21,7 @@ router.get("/", async (req, res) => {
       patientName: payment.patient ? payment.patient.name : "Desconhecido",
       amount: payment.amount,
       status: payment.status,
-      dueDate: payment.dueDate ? new Date(payment.dueDate).toISOString() : null,
+      dueDate: payment.dueDate ? payment.dueDate.toISOString() : null,
     }));
 
     res.json(formattedPayments);
@@ -36,14 +36,19 @@ router.post("/", async (req, res) => {
   try {
     const { patientId, appointmentId, amount, status, dueDate } = req.body;
 
-    // Verifica se o paciente existe
+    if (!patientId || !appointmentId || !amount || !status || !dueDate) {
+      return res
+        .status(400)
+        .json({ error: "Todos os campos são obrigatórios!" });
+    }
+
+    // ✅ Verifica se o paciente e a consulta existem
     const patientExists = await prisma.patient.findUnique({
       where: { id: patientId },
     });
     if (!patientExists)
       return res.status(404).json({ error: "Paciente não encontrado!" });
 
-    // Verifica se a consulta existe
     const appointmentExists = await prisma.appointment.findUnique({
       where: { id: appointmentId },
     });
@@ -71,15 +76,14 @@ router.post("/", async (req, res) => {
 router.put("/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    const { amount, status, dueDate } = req.body;
+    const { status } = req.body;
+
+    if (!status)
+      return res.status(400).json({ error: "O status é obrigatório!" });
 
     const updatedPayment = await prisma.payment.update({
       where: { id: id },
-      data: {
-        amount: parseFloat(amount),
-        status,
-        dueDate: new Date(dueDate),
-      },
+      data: { status },
     });
 
     res.json(updatedPayment);
