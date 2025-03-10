@@ -4,9 +4,9 @@ const { PrismaClient } = require("@prisma/client");
 const prisma = new PrismaClient();
 const router = express.Router();
 
-const PSYCHOLOGIST_EMAIL = "psicologo@email.com"; // 🔹 Email fixo para verificar
+const PSYCHOLOGIST_EMAIL = "psicologo@email.com";
 
-// ✅ Função para obter ou criar o psicólogo fixo
+// 🔁 Obter ou criar psicólogo padrão
 async function getOrCreatePsychologist() {
   let psychologist = await prisma.user.findUnique({
     where: { email: PSYCHOLOGIST_EMAIL },
@@ -17,7 +17,7 @@ async function getOrCreatePsychologist() {
       data: {
         name: "Psicólogo Padrão",
         email: PSYCHOLOGIST_EMAIL,
-        password: "senha123", // 🔹 Defina uma senha segura
+        password: "senha123",
         role: "admin",
       },
     });
@@ -26,137 +26,148 @@ async function getOrCreatePsychologist() {
   return psychologist;
 }
 
-// ✅ Buscar todos os agendamentos
+// ✅ Listar agendamentos
 router.get("/", async (req, res) => {
   try {
-    console.log("🔍 Buscando agendamentos...");
     const psychologist = await getOrCreatePsychologist();
-
     const appointments = await prisma.appointment.findMany({
-      where: { psychologistId: psychologist.id }, // 🔹 Agora usa o ID correto
-      include: {
-        patient: true,
-        payments: true,
-      },
+      where: { psychologistId: psychologist.id },
+      orderBy: { date: "asc" },
+      include: { patient: true, payments: true },
     });
-
     res.json(appointments);
   } catch (error) {
-    console.error("❌ Erro ao buscar agendamentos:", error.message);
     res
       .status(500)
       .json({ error: "Erro ao buscar agendamentos", details: error.message });
   }
 });
 
-// ✅ Criar um agendamento com pagamento
+// ✅ Criar agendamento com pagamento + WhatsApp
 router.post("/", async (req, res) => {
   try {
-    const { patientId, date, amount } = req.body;
-
+    const { patientId, date, amount, type, link } = req.body;
     if (!patientId || !date || !amount) {
       return res
         .status(400)
         .json({ error: "Todos os campos são obrigatórios!" });
     }
 
-    // Verifica se a data é válida e não é uma data no passado
     const appointmentDate = new Date(date);
     if (appointmentDate < new Date()) {
-      return res
-        .status(400)
-        .json({ error: "A data do agendamento não pode ser no passado!" });
+      return res.status(400).json({ error: "Data não pode ser no passado." });
     }
 
-    // ✅ Verificar se o paciente existe
-    const patientExists = await prisma.patient.findUnique({
+    const patient = await prisma.patient.findUnique({
       where: { id: patientId },
     });
-    if (!patientExists) {
+    if (!patient)
       return res.status(404).json({ error: "Paciente não encontrado!" });
-    }
 
-    // ✅ Obter ou criar o psicólogo fixo
     const psychologist = await getOrCreatePsychologist();
 
-    // ✅ Criar a consulta
     const appointment = await prisma.appointment.create({
       data: {
         patientId,
-        psychologistId: psychologist.id, // 🔹 Usa o ID correto do psicólogo
+        psychologistId: psychologist.id,
         date: appointmentDate,
         status: "scheduled",
+        type,
+        link,
       },
     });
 
-    // ✅ Criar o pagamento associado
     await prisma.payment.create({
       data: {
         amount: parseFloat(amount),
         status: "A Pagar",
         dueDate: appointmentDate,
-        patientId: patientId,
+        patientId,
         appointmentId: appointment.id,
       },
     });
 
-    res.status(201).json(appointment);
+    const formattedDate = appointmentDate.toLocaleString("pt-BR", {
+      dateStyle: "short",
+      timeStyle: "short",
+    });
+
+    let message = ` Olá ${patient.name}, sua consulta foi agendada para ${formattedDate}.`;
+    if (type === "remoto" && link) {
+      message += `\n Atendimento remoto: ${link}`;
+    }
+    message += `\n💰 Valor: R$ ${parseFloat(amount).toFixed(2)}`;
+
+    const whatsappURL = `https://wa.me/${
+      patient.phone
+    }?text=${encodeURIComponent(message)}`;
+
+    res.status(201).json({ appointment, whatsappURL });
   } catch (error) {
-    console.error("❌ Erro ao agendar consulta:", error.message);
     res
       .status(500)
-      .json({ error: "Erro interno no servidor.", details: error.message });
+      .json({ error: "Erro ao agendar consulta", details: error.message });
   }
 });
 
-// ✅ Deletar um agendamento
-router.delete("/:id", async (req, res) => {
+// ✅ Atualizar agendamento com WhatsApp
+router.put("/:id", async (req, res) => {
   try {
     const { id } = req.params;
+    const { patientId, date, type, amount, link } = req.body;
 
-    // Verifica se o agendamento existe
-    const appointment = await prisma.appointment.findUnique({
-      where: {
-        id: Number(id), // Converte o id para número
-      },
+    const appointment = await prisma.appointment.findUnique({ where: { id } });
+    if (!appointment)
+      return res.status(404).json({ error: "Consulta não encontrada!" });
+
+    const patient = await prisma.patient.findUnique({
+      where: { id: patientId },
+    });
+    if (!patient)
+      return res.status(404).json({ error: "Paciente não encontrado!" });
+
+    const updated = await prisma.appointment.update({
+      where: { id },
+      data: { patientId, date: new Date(date), type, link },
     });
 
-    if (!appointment) {
-      return res.status(404).json({ error: "Agendamento não encontrado!" });
+    await prisma.payment.updateMany({
+      where: { appointmentId: id },
+      data: { amount: parseFloat(amount), dueDate: new Date(date) },
+    });
+
+    const formattedDate = new Date(date).toLocaleString("pt-BR", {
+      dateStyle: "short",
+      timeStyle: "short",
+    });
+
+    let message = ` Olá ${patient.name}, sua consulta foi atualizada para ${formattedDate}.`;
+    if (type === "remoto" && link) {
+      message += `\n Novo link: ${link}`;
     }
+    message += `\n Valor: R$ ${parseFloat(amount).toFixed(2)}`;
 
-    // Deleta o pagamento associado ao agendamento
-    await prisma.payment.delete({
-      where: { appointmentId: appointment.id },
-    });
+    const whatsappURL = `https://wa.me/${
+      patient.phone
+    }?text=${encodeURIComponent(message)}`;
 
-    // Deleta o agendamento
-    await prisma.appointment.delete({
-      where: { id: appointment.id },
-    });
-
-    res.status(200).json({ message: "Agendamento deletado com sucesso!" });
+    res.status(200).json({ updated, whatsappURL });
   } catch (error) {
-    console.error("❌ Erro ao deletar agendamento:", error.message);
     res
       .status(500)
-      .json({ error: "Erro ao deletar agendamento", details: error.message });
+      .json({ error: "Erro ao atualizar consulta", details: error.message });
   }
 });
 
-// ✅ Atualizar descrição de consulta
+// ✅ Atualizar descrição
 router.put("/:id/description", async (req, res) => {
   try {
     const { id } = req.params;
     const { description } = req.body;
 
-    const appointment = await prisma.appointment.findUnique({
-      where: { id },
-    });
-
-    if (!appointment) {
+    const appointment = await prisma.appointment.findUnique({ where: { id } });
+    if (!appointment)
       return res.status(404).json({ error: "Consulta não encontrada!" });
-    }
 
     const updated = await prisma.appointment.update({
       where: { id },
@@ -165,8 +176,29 @@ router.put("/:id/description", async (req, res) => {
 
     res.json(updated);
   } catch (error) {
-    console.error("Erro ao atualizar descrição:", error.message);
-    res.status(500).json({ error: "Erro interno.", details: error.message });
+    res
+      .status(500)
+      .json({ error: "Erro ao atualizar descrição", details: error.message });
+  }
+});
+
+// ✅ Deletar agendamento e pagamentos
+router.delete("/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const appointment = await prisma.appointment.findUnique({ where: { id } });
+    if (!appointment)
+      return res.status(404).json({ error: "Agendamento não encontrado!" });
+
+    await prisma.payment.deleteMany({ where: { appointmentId: id } });
+    await prisma.appointment.delete({ where: { id } });
+
+    res.status(200).json({ message: "Agendamento deletado com sucesso!" });
+  } catch (error) {
+    res
+      .status(500)
+      .json({ error: "Erro ao deletar agendamento", details: error.message });
   }
 });
 
