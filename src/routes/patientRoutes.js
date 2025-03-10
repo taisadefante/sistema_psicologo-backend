@@ -1,7 +1,8 @@
 const express = require("express");
-const prisma = require("../prismaClient");
+const prisma = require("../../prismaClient");
 const router = express.Router();
 
+// 📌 Função para calcular idade
 const calculateAge = (birthdate) => {
   if (!birthdate) return null;
   const today = new Date();
@@ -17,6 +18,7 @@ const calculateAge = (birthdate) => {
   return age;
 };
 
+// 📌 Buscar todos os pacientes
 router.get("/", async (req, res) => {
   try {
     const patients = await prisma.patient.findMany({
@@ -29,6 +31,7 @@ router.get("/", async (req, res) => {
   }
 });
 
+// 📌 Criar novo paciente
 router.post("/", async (req, res) => {
   try {
     const { name, phone, address, birthdate, contact } = req.body;
@@ -55,6 +58,7 @@ router.post("/", async (req, res) => {
   }
 });
 
+// 📌 Atualizar paciente
 router.put("/:id", async (req, res) => {
   try {
     const { id } = req.params;
@@ -83,6 +87,7 @@ router.put("/:id", async (req, res) => {
   }
 });
 
+// 📌 Excluir paciente
 router.delete("/:id", async (req, res) => {
   try {
     const { id } = req.params;
@@ -91,6 +96,36 @@ router.delete("/:id", async (req, res) => {
   } catch (error) {
     console.error("Erro ao excluir paciente:", error);
     res.status(500).json({ error: "Erro interno ao excluir paciente." });
+  }
+});
+
+// 📌 Consultas do paciente
+router.get("/:id/appointments", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const appointments = await prisma.appointment.findMany({
+      where: { patientId: id },
+      orderBy: { date: "desc" },
+    });
+    res.json(appointments);
+  } catch (error) {
+    console.error("Erro ao buscar consultas do paciente:", error);
+    res.status(500).json({ error: "Erro ao buscar consultas." });
+  }
+});
+
+// 📌 Pagamentos do paciente
+router.get("/:id/payments", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const payments = await prisma.payment.findMany({
+      where: { patientId: id },
+      orderBy: { dueDate: "desc" },
+    });
+    res.json(payments);
+  } catch (error) {
+    console.error("Erro ao buscar pagamentos do paciente:", error);
+    res.status(500).json({ error: "Erro ao buscar pagamentos." });
   }
 });
 
